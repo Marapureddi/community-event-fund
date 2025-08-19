@@ -22,17 +22,14 @@
   <!-- Babel for JSX in-browser (fine for small static sites) -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script><!-- babel-standalone -->
   <!-- Recharts UMD -->
-  <script src="https://unpkg.com/recharts/umd/Recharts.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body class="bg-slate-50 text-slate-900">
   <div id="root" class="min-h-screen"></div>
 
   <script type="text/babel" data-presets="env,react">
     const { useState, useMemo, useEffect, useRef } = React;
-    const {
-      PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend,
-      BarChart, Bar, XAxis, YAxis, CartesianGrid,
-    } = Recharts;
+    // Using Chart.js via CDN
 
     // ---- Utilities ----
     const uid = () => Math.random().toString(36).slice(2, 9);
@@ -125,6 +122,10 @@
       const [expenseForm, setExpenseForm] = useState({personName:'', category:'Food', description:'', amount:'', date: new Date().toISOString().slice(0,10)});
       const download = useDownload();
 
+      // Chart refs
+      const pieRef = useRef(null);
+      const barRef = useRef(null);
+
       // Derived metrics
       const totals = useMemo(()=>{
         const totalContrib = data.families.reduce((s,f)=> s + (+f.contributed||0), 0);
@@ -141,6 +142,35 @@
         });
         return Object.entries(byPerson).map(([person, amount])=>({person, amount})).sort((a,b)=>b.amount-a.amount);
       },[data.expenses]);
+
+      // Draw/update charts when data changes
+      useEffect(()=>{
+        if(!window.Chart) return;
+        // Pie chart
+        if (pieRef.current?._chart) pieRef.current._chart.destroy();
+        const pieCtx = pieRef.current.getContext('2d');
+        const pie = new Chart(pieCtx, {
+          type: 'pie',
+          data: {
+            labels: categoryBreakdown.map(d=>d.category),
+            datasets: [{ data: categoryBreakdown.map(d=>d.amount) }]
+          },
+          options: { responsive: true, plugins: { legend: { position: 'bottom' } } }
+        });
+        pieRef.current._chart = pie;
+
+        // Bar chart
+        if (barRef.current?._chart) barRef.current._chart.destroy();
+        const barCtx = barRef.current.getContext('2d');
+        const bar = new Chart(barCtx, {
+          type: 'bar',
+          data: {
+            labels: ['Totals'],
+            datasets: [
+              { label: 'Contributions', data: [totals.totalContrib] },
+              { label: 'Expenses', data: [totals.totalExpense] },
+            ]
+          },
 
       const netPositions = useMemo(()=>{
         // Contribution per person (sum families with matching familyName to personName)
