@@ -20,14 +20,14 @@
   <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <!-- Babel for JSX in-browser (fine for small static sites) -->
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script><!-- babel-standalone -->
   <!-- Recharts UMD -->
   <script src="https://unpkg.com/recharts/umd/Recharts.min.js"></script>
 </head>
 <body class="bg-slate-50 text-slate-900">
   <div id="root" class="min-h-screen"></div>
 
-  <script type="text/babel">
+  <script type="text/babel" data-presets="env,react">
     const { useState, useMemo, useEffect, useRef } = React;
     const {
       PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend,
@@ -418,8 +418,16 @@
       );
     }
 
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
+    try {
+      const root = ReactDOM.createRoot(document.getElementById('root'));
+      root.render(<App />);
+    } catch (err) {
+      console.error(err);
+      const el = document.getElementById('root');
+      el.innerHTML = `<div style="padding:16px;color:#b91c1c;background:#fee2e2;border:1px solid #fecaca;border-radius:12px;">
+        <strong>App failed to load.</strong><br/>${String(err)}
+      </div>`;
+    }
   </script>
 </body>
 </html>
