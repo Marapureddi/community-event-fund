@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Community Event Fund Tracker</title>
+  <!-- Tailwind CDN (Play) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          boxShadow: { glow: '0 10px 30px rgba(0,0,0,0.08)' },
+          borderRadius: { '2xl': '1rem' },
+        },
+      },
+    };
+  </script>
+  <!-- React + ReactDOM UMD -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <!-- Babel for JSX in-browser (fine for small static sites) -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- Recharts UMD -->
+  <script src="https://unpkg.com/recharts/umd/Recharts.min.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-900">
+  <div id="root" class="min-h-screen"></div>
+
+  <script type="text/babel">
+    const { useState, useMemo, useEffect, useRef } = React;
+    const {
+      PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend,
+      BarChart, Bar, XAxis, YAxis, CartesianGrid,
+    } = Recharts;
+
+    // ---- Utilities ----
+    const uid = () => Math.random().toString(36).slice(2, 9);
+
+    const defaultData = {
+      families: [
+        { id: uid(), houseNumber: '12A', familyName: 'Reddy', contributed: 150 },
+        { id: uid(), houseNumber: '14', familyName: 'Patel', contributed: 200 },
+      ],
+      expenses: [
+        { id: uid(), personName: 'Anita', category: 'Food', description: 'Snacks', amount: 80, date: new Date().toISOString().slice(0,10) },
+        { id: uid(), personName: 'Vikram', category: 'Decoration', description: 'Flowers', amount: 60, date: new Date().toISOString().slice(0,10) },
+      ],
+    };
+
+    const STORAGE_KEY = 'community-event-fund-data-v1';
+
+    function usePersistentData() {
+      const [data, setData] = useState(() => {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY);
+          return raw ? JSON.parse(raw) : defaultData;
+        } catch {
+          return defaultData;
+        }
+      });
+      useEffect(() => {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      }, [data]);
+      return [data, setData];
+    }
+
+    function StatCard({ label, value, sub }) {
+      return (
+        <div className="bg-white rounded-2xl shadow-glow p-5">
+          <div className="text-sm text-slate-500">{label}</div>
+          <div className="text-2xl font-semibold mt-1">{value}</div>
+          {sub && <div className="text-xs text-slate-400 mt-2">{sub}</div>}
+        </div>
+      );
+    }
+
+    function Section({ title, children, actions }) {
+      return (
+        <section className="bg-white rounded-2xl shadow-glow p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold">{title}</h2>
+            <div className="flex items-center gap-2">{actions}</div>
+          </div>
+          {children}
+        </section>
+      );
+    }
+
+    function TextInput(props){
+      return <input {...props} className={(props.className||'')+" border rounded-xl px-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-indigo-200"} />
+    }
+
+    function NumberInput(props){
+      return <input type="number" step="0.01" {...props} className={(props.className||'')+" border rounded-xl px-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-indigo-200"} />
+    }
+
+    function Select({options, ...rest}){
+      return (
+        <select {...rest} className={(rest.className||'')+" border rounded-xl px-3 py-2 w-full bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"}>
+          {options.map(o => <option key={o} value={o}>{o}</option>)}
+        </select>
+      );
+    }
+
+    function useDownload(){
+      const aRef = useRef(null);
+      useEffect(()=>{ aRef.current = document.createElement('a'); aRef.current.style.display='none'; document.body.appendChild(aRef.current); return ()=>aRef.current && aRef.current.remove(); },[]);
+      return (filename, text) => {
+        const blob = new Blob([text], {type:'application/json'});
+        const url = URL.createObjectURL(blob);
+        aRef.current.href = url; aRef.current.download = filename; aRef.current.click();
+        setTimeout(()=>URL.revokeObjectURL(url), 500);
+      };
+    }
+
+    function prettyCurrency(n){
+      return new Intl.NumberFormat(undefined, {style:'currency', currency:'USD'}).format(+n || 0);
+    }
+
+    // ---- Main App ----
+    function App(){
+      const [data, setData] = usePersistentData();
+      const [familyForm, setFamilyForm] = useState({houseNumber:'', familyName:'', contributed:''});
+      const [expenseForm, setExpenseForm] = useState({personName:'', category:'Food', description:'', amount:'', date: new Date().toISOString().slice(0,10)});
+      const download = useDownload();
+
+      // Derived metrics
+      const totals = useMemo(()=>{
+        const totalContrib = data.families.reduce((s,f)=> s + (+f.contributed||0), 0);
+        const totalExpense = data.expenses.reduce((s,e)=> s + (+e.amount||0), 0);
+        const remaining = totalContrib - totalExpense;
+        return { totalContrib, totalExpense, remaining };
+      },[data]);
+
+      const reimbursements = useMemo(()=>{
+        const byPerson = {};
+        data.expenses.forEach(e => {
+          const key = e.personName || 'Unknown';
+          byPerson[key] = (byPerson[key] || 0) + (+e.amount||0);
+        });
+        return Object.entries(byPerson).map(([person, amount])=>({person, amount})).sort((a,b)=>b.amount-a.amount);
+      },[data.expenses]);
+
+      const netPositions = useMemo(()=>{
+        // Contribution per person (sum families with matching familyName to personName)
+        const contribByName = {};
+        data.families.forEach(f=>{
+          const key = f.familyName || 'Unknown';
+          contribByName[key] = (contribByName[key]||0) + (+f.contributed||0);
+        });
+        const allNames = new Set([...Object.keys(contribByName), ...reimbursements.map(r=>r.person)]);
+        return [...allNames].map(name=>{
+          const contrib = contribByName[name]||0;
+          const spent = (reimbursements.find(r=>r.person===name)?.amount)||0;
+          return { name, contributed: contrib, spent, net: contrib - spent };
+        }).sort((a,b)=> a.name.localeCompare(b.name));
+      },[data.families, reimbursements]);
+
+      const categoryBreakdown = useMemo(()=>{
+        const byCat = {};
+        data.expenses.forEach(e=>{ const c=e.category||'Misc'; byCat[c]=(byCat[c]||0)+(+e.amount||0); });
+        return Object.entries(byCat).map(([category, amount])=>({category, amount}));
+      },[data.expenses]);
+
+      const addFamily = (e) => {
+        e.preventDefault();
+        if(!familyForm.familyName || !familyForm.houseNumber) return;
+        setData(d=>({...d, families:[...d.families, { id: uid(), ...familyForm, contributed:+familyForm.contributed||0 }]}));
+        setFamilyForm({houseNumber:'', familyName:'', contributed:''});
+      };
+
+      const addExpense = (e) => {
+        e.preventDefault();
+        if(!expenseForm.personName || !expenseForm.amount) return;
+        setData(d=>({...d, expenses:[...d.expenses, { id: uid(), ...expenseForm, amount:+expenseForm.amount||0 }]}));
+        setExpenseForm({personName:'', category: expenseForm.category, description:'', amount:'', date: new Date().toISOString().slice(0,10)});
+      };
+
+      const deleteItem = (type, id) => {
+        setData(d=>({...d, [type]: d[type].filter(x=>x.id!==id)}));
+      };
+
+      const exportJSON = () => {
+        download('event-data.json', JSON.stringify(data, null, 2));
+      };
+
+      const importJSON = (file) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          try { setData(JSON.parse(reader.result)); }
+          catch { alert('Invalid file.'); }
+        };
+        reader.readAsText(file);
+      };
+
+      return (
+        <div className="max-w-6xl mx-auto p-6 space-y-6">
+          <header className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-bold">Community Event Fund Tracker</h1>
+              <p className="text-slate-500 text-sm">Track contributions, expenses, reimbursements, and balance — free & static (GitHub Pages friendly).</p>
+            </div>
+            <div className="flex gap-2">
+              <button className="px-4 py-2 rounded-2xl bg-indigo-600 text-white shadow-glow" onClick={exportJSON}>Export JSON</button>
+              <label className="px-4 py-2 rounded-2xl bg-slate-200 cursor-pointer">
+                Import JSON
+                <input type="file" accept="application/json" className="hidden" onChange={(e)=> e.target.files[0] && importJSON(e.target.files[0])} />
+              </label>
+            </div>
+          </header>
+
+          {/* Stats */}
+          <div className="grid md:grid-cols-3 gap-4">
+            <StatCard label="Total Contributions" value={prettyCurrency(totals.totalContrib)} />
+            <StatCard label="Total Expenses" value={prettyCurrency(totals.totalExpense)} />
+            <StatCard label="Remaining Balance" value={prettyCurrency(totals.remaining)} sub={totals.remaining < 0 ? 'Warning: expenses exceed contributions' : undefined} />
+          </div>
+
+          {/* Forms */}
+          <div className="grid md:grid-cols-2 gap-6">
+            <Section title="Add Family Contribution">
+              <form onSubmit={addFamily} className="grid grid-cols-2 gap-3">
+                <div className="col-span-1">
+                  <label className="text-xs text-slate-500">House Number</label>
+                  <TextInput value={familyForm.houseNumber} onChange={e=>setFamilyForm({...familyForm, houseNumber:e.target.value})} placeholder="e.g., 22B" />
+                </div>
+                <div className="col-span-1">
+                  <label className="text-xs text-slate-500">Family Name</label>
+                  <TextInput value={familyForm.familyName} onChange={e=>setFamilyForm({...familyForm, familyName:e.target.value})} placeholder="e.g., Sharma" />
+                </div>
+                <div className="col-span-2">
+                  <label className="text-xs text-slate-500">Contribution Amount</label>
+                  <NumberInput value={familyForm.contributed} onChange={e=>setFamilyForm({...familyForm, contributed:e.target.value})} placeholder="e.g., 100" />
+                </div>
+                <div className="col-span-2">
+                  <button className="px-4 py-2 rounded-2xl bg-emerald-600 text-white">Add Contribution</button>
+                </div>
+              </form>
+            </Section>
+
+            <Section title="Add Expense">
+              <form onSubmit={addExpense} className="grid grid-cols-2 gap-3">
+                <div className="col-span-1">
+                  <label className="text-xs text-slate-500">Person Who Paid</label>
+                  <TextInput value={expenseForm.personName} onChange={e=>setExpenseForm({...expenseForm, personName:e.target.value})} placeholder="e.g., Anita" />
+                </div>
+                <div className="col-span-1">
+                  <label className="text-xs text-slate-500">Category</label>
+                  <Select value={expenseForm.category} onChange={e=>setExpenseForm({...expenseForm, category:e.target.value})} options={['Food','Tent','Decoration','Misc']} />
+                </div>
+                <div className="col-span-2">
+                  <label className="text-xs text-slate-500">Description</label>
+                  <TextInput value={expenseForm.description} onChange={e=>setExpenseForm({...expenseForm, description:e.target.value})} placeholder="e.g., Paper plates" />
+                </div>
+                <div className="col-span-1">
+                  <label className="text-xs text-slate-500">Amount</label>
+                  <NumberInput value={expenseForm.amount} onChange={e=>setExpenseForm({...expenseForm, amount:e.target.value})} placeholder="e.g., 45" />
+                </div>
+                <div className="col-span-1">
+                  <label className="text-xs text-slate-500">Date</label>
+                  <TextInput type="date" value={expenseForm.date} onChange={e=>setExpenseForm({...expenseForm, date:e.target.value})} />
+                </div>
+                <div className="col-span-2">
+                  <button className="px-4 py-2 rounded-2xl bg-indigo-600 text-white">Add Expense</button>
+                </div>
+              </form>
+            </Section>
+          </div>
+
+          {/* Tables */}
+          <div className="grid lg:grid-cols-2 gap-6">
+            <Section title="Families & Contributions">
+              <div className="overflow-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-slate-500">
+                      <th className="py-2 pr-3">House #</th>
+                      <th className="py-2 pr-3">Family</th>
+                      <th className="py-2 pr-3">Contributed</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.families.map(f => (
+                      <tr key={f.id} className="border-t">
+                        <td className="py-2 pr-3">{f.houseNumber}</td>
+                        <td className="py-2 pr-3">{f.familyName}</td>
+                        <td className="py-2 pr-3">{prettyCurrency(f.contributed)}</td>
+                        <td className="py-2 pr-3 text-right">
+                          <button className="text-rose-600" onClick={()=>deleteItem('families', f.id)}>Delete</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Section>
+
+            <Section title="Expenses">
+              <div className="overflow-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-slate-500">
+                      <th className="py-2 pr-3">Date</th>
+                      <th className="py-2 pr-3">Person</th>
+                      <th className="py-2 pr-3">Category</th>
+                      <th className="py-2 pr-3">Description</th>
+                      <th className="py-2 pr-3">Amount</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.expenses.map(e => (
+                      <tr key={e.id} className="border-t">
+                        <td className="py-2 pr-3 whitespace-nowrap">{e.date}</td>
+                        <td className="py-2 pr-3">{e.personName}</td>
+                        <td className="py-2 pr-3">{e.category}</td>
+                        <td className="py-2 pr-3">{e.description}</td>
+                        <td className="py-2 pr-3">{prettyCurrency(e.amount)}</td>
+                        <td className="py-2 pr-3 text-right">
+                          <button className="text-rose-600" onClick={()=>deleteItem('expenses', e.id)}>Delete</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Section>
+          </div>
+
+          {/* Reimbursements & Net position */}
+          <div className="grid lg:grid-cols-2 gap-6">
+            <Section title="Reimbursements (to pay back)">
+              <div className="overflow-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-slate-500">
+                      <th className="py-2 pr-3">Person</th>
+                      <th className="py-2 pr-3">Amount Owed</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reimbursements.map(r => (
+                      <tr key={r.person} className="border-t">
+                        <td className="py-2 pr-3">{r.person}</td>
+                        <td className="py-2 pr-3">{prettyCurrency(r.amount)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Section>
+
+            <Section title="Net Position by Person" actions={<span className="text-xs text-slate-400">(Contributed − Spent)</span>}>
+              <div className="overflow-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-slate-500">
+                      <th className="py-2 pr-3">Name</th>
+                      <th className="py-2 pr-3">Contributed</th>
+                      <th className="py-2 pr-3">Spent</th>
+                      <th className="py-2 pr-3">Net</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {netPositions.map(n => (
+                      <tr key={n.name} className="border-t">
+                        <td className="py-2 pr-3">{n.name}</td>
+                        <td className="py-2 pr-3">{prettyCurrency(n.contributed)}</td>
+                        <td className="py-2 pr-3">{prettyCurrency(n.spent)}</td>
+                        <td className={`py-2 pr-3 ${n.net<0?'text-rose-600':'text-emerald-700'}`}>{prettyCurrency(n.net)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Section>
+          </div>
+
+          {/* Charts */}
+          <div className="grid md:grid-cols-2 gap-6">
+            <Section title="Expenses by Category (Pie)">
+              <div className="h-72">
+                <ResponsiveContainer>
+                  <PieChart>
+                    <Pie data={categoryBreakdown} dataKey="amount" nameKey="category" outerRadius={100} label>
+                      {categoryBreakdown.map((_, i) => <Cell key={i} />)}
+                    </Pie>
+                    <Tooltip formatter={(v)=>prettyCurrency(v)} />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            </Section>
+
+            <Section title="Contributions vs Expenses (Bar)">
+              <div className="h-72">
+                <ResponsiveContainer>
+                  <BarChart data={[{ name:'Totals', Contributions: totals.totalContrib, Expenses: totals.totalExpense }]}> 
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="name" />
+                    <YAxis />
+                    <Tooltip formatter={(v)=>prettyCurrency(v)} />
+                    <Legend />
+                    <Bar dataKey="Contributions" />
+                    <Bar dataKey="Expenses" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </Section>
+          </div>
+
+          <footer className="text-xs text-slate-400 text-center pt-6">
+            <p>Data is stored locally in your browser and can be exported/imported as JSON for sharing via GitHub.</p>
+          </footer>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
